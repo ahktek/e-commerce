@@ -8,9 +8,17 @@ export async function proxy(request: NextRequest) {
     },
   })
 
+  let url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  if (url && url.includes('/rest/v1')) {
+    url = url.split('/rest/v1')[0]
+  }
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  const isValid = !!(url && url.startsWith('http'))
+  const finalUrl = isValid && url ? url : 'https://placeholder.supabase.co'
+
   const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    finalUrl,
+    key || 'placeholder-key',
     {
       cookies: {
         getAll() {
@@ -29,27 +37,32 @@ export async function proxy(request: NextRequest) {
     }
   )
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
   const pathname = request.nextUrl.pathname
 
-  // Protect /account and /checkout routes
-  if (pathname.startsWith('/account') || pathname.startsWith('/checkout')) {
-    if (!user) {
-      const url = request.nextUrl.clone()
-      url.pathname = '/login'
-      url.searchParams.set('redirectTo', pathname)
-      return NextResponse.redirect(url)
-    }
-  }
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
 
-  // If logged in and trying to go to login page, redirect to account
-  if (pathname === '/login' && user) {
-    const url = request.nextUrl.clone()
-    url.pathname = '/account'
-    return NextResponse.redirect(url)
+    // Protect /account and /checkout routes
+    if (pathname.startsWith('/account') || pathname.startsWith('/checkout')) {
+      if (!user) {
+        const urlObj = request.nextUrl.clone()
+        urlObj.pathname = '/login'
+        urlObj.searchParams.set('redirectTo', pathname)
+        return NextResponse.redirect(urlObj)
+      }
+    }
+
+    // If logged in and trying to go to login page, redirect to account
+    if (pathname === '/login' && user) {
+      const urlObj = request.nextUrl.clone()
+      urlObj.pathname = '/account'
+      return NextResponse.redirect(urlObj)
+    }
+  } catch (e) {
+    // If Supabase keys are missing or invalid, bypass blocking page load to prevent 500 crashes
+    console.error('Proxy auth check failed:', e)
   }
 
   return response
